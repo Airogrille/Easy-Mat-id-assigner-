@@ -31,6 +31,14 @@ class NamingTest(unittest.TestCase):
     def test_color_of(self):
         self.assertEqual(naming.color_of("MT_Factory_Pipe_A_Red"), "Red")
 
+    def test_blank_material_name(self):
+        self.assertEqual(naming.material_name("SM_Pipe_A", naming.BLANK), "MT_Pipe_A_Blank")
+
+    def test_palette_excludes_gray_and_blank(self):
+        labels = [label for label, _ in naming.COLORS]
+        self.assertNotIn("Gray", labels)
+        self.assertNotIn(naming.BLANK, labels)
+
 
 if __name__ == "__main__":
     unittest.main()

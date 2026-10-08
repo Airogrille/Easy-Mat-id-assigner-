@@ -7,6 +7,8 @@ import re
 MESH_PREFIXES = ("SM_", "RM_", "SK_")
 MATERIAL_PREFIX = "MT_"
 VALID_NAME = re.compile(r"^MT_[A-Za-z0-9]+(?:_[A-Za-z0-9]+)*$")
+BLANK = "Blank"
+BLANK_RGB = (160, 160, 160)
 
 # Order = order of "Add material". Colors are picked to stay distinct in the viewport.
 COLORS = (
@@ -25,7 +27,6 @@ COLORS = (
     ("Navy", (30, 40, 120)),
     ("Olive", (128, 128, 0)),
     ("White", (235, 235, 235)),
-    ("Gray", (128, 128, 128)),
     ("Black", (30, 30, 30)),
 )
 
