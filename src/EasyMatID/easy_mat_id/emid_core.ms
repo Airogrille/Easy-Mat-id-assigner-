@@ -2,7 +2,9 @@
 -- Rules: no loops over all faces; per-slot work goes through native select-by-material.
 global EMID_TAG = 0x454D4944      -- appData channel on our materials: "slot" | "blank"
 global emid_busy = false          -- set by Python while an action runs; events are ignored
-global emid_nec = undefined       -- NodeEventCallback for sub-object selection
+global emid_nec                   -- NodeEventCallback for sub-object selection
+-- a reload of this file must not orphan a live callback: switch the old one off first
+if emid_nec != undefined do (emid_nec.enabled = false; emid_nec = undefined)
 
 fn emid_current = if getCommandPanelTaskMode() == #modify then modPanel.getCurrentObject() else undefined
 
@@ -239,7 +241,8 @@ fn emid_actRemove n slotIndex blankName blankClr = (
         )
         emid_setID n t faces bid
     )
-    emid_removeSlots mm #(slotIndex)
+    -- refused only for the sole slot without faces (UI greys × on a sole slot anyway)
+    if not (emid_removeSlots mm #(slotIndex)) do return -2
     emid_prune n t true
     faces.numberSet
 )
@@ -254,7 +257,11 @@ fn emid_actSelectID n id = (
     (emid_selectIDs n t #(id)).numberSet
 )
 
--- Selects faces whose ID has no slot, switches to Polygon level. Returns face count.
+-- IDs of slots that really carry a material. A slot with material = undefined does NOT count:
+-- in Unity its polygons get a submesh without a material slot to assign to.
+fn emid_liveIDs mm = for i = 1 to mm.materialList.count where mm.materialList[i] != undefined collect mm.materialIDList[i]
+
+-- Selects faces with no usable slot (no slot, or slot without material), switches to Polygon level.
 fn emid_actSelectUnslotted n = (
     local t = emid_ready n
     local mm = n.material
@@ -262,7 +269,8 @@ fn emid_actSelectUnslotted n = (
     max modify mode
     modPanel.setCurrentObject (if t == #poly then n.baseObject else t)
     subObjectLevel = 4
-    local faces = (emid_allFaces n t) - (emid_selectIDs n t (mm.materialIDList as array))
+    local live = emid_liveIDs mm
+    local faces = (emid_allFaces n t) - (emid_selectIDs n t live)
     emid_setSel n t faces
     faces.numberSet
 )
@@ -290,15 +298,23 @@ fn emid_readSelectedIDs n = (
     #(b as array, s.numberSet > cap)
 )
 
--- #(faces without a slot, slot IDs without faces) for Validate
+-- #(faces without a usable slot, slot IDs without faces) for Validate. One select per ID.
 fn emid_readFaceIssues n = (
     local t = emid_ready n
     local mm = n.material
     if t == undefined or classOf mm != Multimaterial do return undefined
     local ids = mm.materialIDList as array
-    local unslotted = (emid_allFaces n t) - (emid_facesOfIDs n t ids)
-    local used = emid_usedIDs n t ids
-    #(unslotted.numberSet, for id in ids where findItem used id == 0 collect id)
+    local live = emid_liveIDs mm
+    local saved = emid_getSel n t
+    local covered = #{}
+    local empty = #()
+    for id in ids do (
+        local f = emid_selectIDs n t #(id)
+        if f.isEmpty then append empty id
+        else if findItem live id != 0 do covered = covered + f
+    )
+    emid_setSel n t saved
+    #(((emid_allFaces n t) - covered).numberSet, empty)
 )
 
 -- ---------- sub-object selection event ----------
