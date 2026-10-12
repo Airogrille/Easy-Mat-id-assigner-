@@ -161,3 +161,59 @@ def clean(node):
         "clean", lambda: rt.emid_actClean(node),
         lambda count: "Cleaned %d empty slots" % count,
     )
+
+
+def validate(node):
+    """Explicit export diagnostics; preserve selection and leave Undo untouched."""
+    with _quiet():
+        state = read_state(node)
+        if not state.is_multi:
+            return [Issue("Material is not Multi/Sub-Object.", None)]
+
+        issues = []
+        face_issues = rt.emid_readFaceIssues(node)
+        if face_issues is not None:
+            unslotted, empty = face_issues
+            if unslotted:
+                issues.append(Issue(
+                    "%d faces have no material slot — Unity can't assign a material to them." % unslotted,
+                    "select_unslotted",
+                ))
+            if len(empty):
+                issues.append(Issue(
+                    "Empty slots: ID %s." % ", ".join(str(int(mat_id)) for mat_id in empty),
+                    "clean",
+                ))
+
+        names = {}
+        for slot, sub in zip(state.slots, node.material.materialList):
+            if sub is None:
+                issues.append(Issue("ID %d: empty slot." % slot.id, None))
+                continue
+            cls = rt.classOf(sub)
+            if cls == rt.Multimaterial:
+                issues.append(Issue("ID %d: nested Multi/Sub — Unity can't use it." % slot.id, None))
+            elif cls != rt.Standardmaterial:
+                issues.append(Issue("ID %d: %s, use Standard." % (slot.id, slot.cls), None))
+            if not naming.VALID_NAME.match(slot.name):
+                issues.append(Issue("ID %d: '%s' breaks MT_ naming." % (slot.id, slot.name), None))
+            names.setdefault(slot.name, []).append(slot.id)
+
+        for name in sorted(names):
+            if len(names[name]) > 1:
+                issues.append(Issue("'%s' is used by several slots." % name, None))
+
+        # A shared handle is one material, however many objects reference it.
+        handles = {}
+        for obj in rt.objects:
+            material = obj.material
+            if material is None:
+                continue
+            subs = material.materialList if rt.classOf(material) == rt.Multimaterial else [material]
+            for sub in subs:
+                if sub is not None:
+                    handles.setdefault(str(sub.name), set()).add(int(rt.getHandleByAnim(sub)))
+        for name in sorted(names):
+            if len(handles.get(name, ())) > 1:
+                issues.append(Issue("'%s': another material in the scene has the same name." % name, None))
+        return issues
