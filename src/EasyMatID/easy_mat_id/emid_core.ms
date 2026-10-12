@@ -125,18 +125,20 @@ fn emid_appendSlot mm m id = (
 )
 
 -- drops slots by 1-based index; never leaves the Multi empty
+-- Rewrite kept slots first, shrink LAST: shrink-then-rewrite in one Undo record with face ID
+-- changes crashes Max inside Redo (check_undo_min E2 / E2c vs E2d, 11.10.2026)
 fn emid_removeSlots mm idxs = (
     local keep = for i = 1 to mm.materialList.count where findItem idxs i == 0 collect i
     if keep.count == 0 do return false
     local mats = for i in keep collect mm.materialList[i]
     local ids = for i in keep collect mm.materialIDList[i]
     local names = for i in keep collect mm.names[i]
-    mm.numsubs = keep.count
     for k = 1 to keep.count do (
         mm.materialList[k] = mats[k]
         mm.materialIDList[k] = ids[k]
         if names[k] != undefined do mm.names[k] = names[k]
     )
+    mm.numsubs = keep.count                 -- only discarded slots lose their reference here
     true
 )
 
