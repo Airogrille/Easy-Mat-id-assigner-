@@ -41,11 +41,17 @@ fn emid_setSel n t ba = (
 )
 
 -- Edit Poly works only while it is current in the stack: make it current. Returns target or undefined.
+-- Right after Undo Edit Poly returns STALE face IDs and select-by-material results until the
+-- stack is evaluated, even when it is already current; `classOf n` evaluates it (check_undo_min
+-- E6 / E6b / E6d, 12.10.2026). Cheap when the stack is already valid.
 fn emid_ready n = (
     local t = emid_target n
-    if t != undefined and t != #poly and not emid_isCurrent t do (
-        max modify mode
-        modPanel.setCurrentObject t
+    if t != undefined and t != #poly do (
+        if not emid_isCurrent t do (
+            max modify mode
+            modPanel.setCurrentObject t
+        )
+        classOf n
     )
     t
 )
@@ -124,24 +130,6 @@ fn emid_appendSlot mm m id = (
     mm.names[i] = m.name
 )
 
--- drops slots by 1-based index; never leaves the Multi empty
--- Rewrite kept slots first, shrink LAST: shrink-then-rewrite in one Undo record with face ID
--- changes crashes Max inside Redo (check_undo_min E2 / E2c vs E2d, 11.10.2026)
-fn emid_removeSlots mm idxs = (
-    local keep = for i = 1 to mm.materialList.count where findItem idxs i == 0 collect i
-    if keep.count == 0 do return false
-    local mats = for i in keep collect mm.materialList[i]
-    local ids = for i in keep collect mm.materialIDList[i]
-    local names = for i in keep collect mm.names[i]
-    for k = 1 to keep.count do (
-        mm.materialList[k] = mats[k]
-        mm.materialIDList[k] = ids[k]
-        if names[k] != undefined do mm.names[k] = names[k]
-    )
-    mm.numsubs = keep.count                 -- only discarded slots lose their reference here
-    true
-)
-
 -- Never `n.material = m` directly: on Editable Poly open at Polygon level with selected faces
 -- Max assigns the material TO THE SELECTION (new face ID, wraps into a new Multi).
 -- check_isolate v2 M1/M2, 08.10.2026. Edit Poly and non-current nodes are not affected.
@@ -154,6 +142,28 @@ fn emid_assignMat n m = (
         throw()                               -- re-raise the original exception
     )
     if drop do subObjectLevel = lvl
+)
+
+-- Drops slots of the node's Multi by 1-based index; false (nothing changed) if no slot would remain.
+-- NEVER shrink a Multi in place (`mm.numsubs = smaller`): together with polygon records in one Undo
+-- record Max crashes inside Redo, in either write order (check_undo_min E2, E2c, E5, E5a).
+-- A new Multi with the kept slots is assigned instead (E2e, E5d, 12.10.2026). Sub-materials are the
+-- same objects (appData kept); the Multi handle changes — accepted by the owner, 12.10.2026.
+fn emid_removeSlots n idxs = (
+    local mm = n.material
+    local keep = for i = 1 to mm.materialList.count where findItem idxs i == 0 collect i
+    if keep.count == 0 do return false
+    local nm = Multimaterial numsubs:keep.count
+    nm.name = mm.name
+    for k = 1 to keep.count do (
+        local i = keep[k]
+        nm.materialList[k] = mm.materialList[i]
+        nm.materialIDList[k] = mm.materialIDList[i]
+        nm.mapEnabled[k] = mm.mapEnabled[i]
+        if mm.names[i] != undefined do nm.names[k] = mm.names[i]
+    )
+    emid_assignMat n nm
+    true
 )
 
 -- A Multi shared by several nodes gets copied for this node before any change to it.
@@ -197,7 +207,7 @@ fn emid_prune n t onlyOurs = (
     local ids = for i in idx collect mm.materialIDList[i]   -- not inline: "Bad free thunk" in Max 2027
     local used = emid_usedIDs n t ids
     local drop = for i in idx where findItem used mm.materialIDList[i] == 0 collect i
-    if drop.count > 0 and emid_removeSlots mm drop then drop.count else 0
+    if drop.count > 0 and emid_removeSlots n drop then drop.count else 0
 )
 
 -- ---------- actions (called from Python inside one Undo record) ----------
@@ -244,7 +254,7 @@ fn emid_actRemove n slotIndex blankName blankClr = (
         emid_setID n t faces bid
     )
     -- refused only for the sole slot without faces (UI greys × on a sole slot anyway)
-    if not (emid_removeSlots mm #(slotIndex)) do return -2
+    if not (emid_removeSlots n #(slotIndex)) do return -2
     emid_prune n t true
     faces.numberSet
 )
@@ -289,6 +299,7 @@ fn emid_actClean n = (
 fn emid_readSelectedIDs n = (
     local t = emid_target n
     if t == undefined or not emid_atPolyLevel t do return undefined
+    if t != #poly do classOf n                -- stale right after Undo, see emid_ready
     local s = emid_getSel n t
     local cap = if t == #poly then 20000 else 1000
     local b = #{}
